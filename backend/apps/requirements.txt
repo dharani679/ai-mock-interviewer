@@ -1,0 +1,10 @@
+fastapi 
+uvicorn 
+sqlalchemy 
+aiosqlite
+alembic 
+python-dotenv 
+python-jose 
+passlib 
+bcrypt
+routes
