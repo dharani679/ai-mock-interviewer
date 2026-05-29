@@ -7,6 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from apps.db.database import Base
 
 if TYPE_CHECKING:
+    from apps.models.embedding import Embedding
     from apps.models.resume import Resume
     from apps.models.user import User
 
@@ -25,3 +26,7 @@ class EmbeddingMetadata(Base):
 
     user: Mapped["User"] = relationship(back_populates="embeddings_metadata")
     resume: Mapped["Resume | None"] = relationship(back_populates="embeddings_metadata")
+    embeddings: Mapped[list["Embedding"]] = relationship(
+        back_populates="metadata_ref",
+        cascade="all, delete-orphan",
+    )
