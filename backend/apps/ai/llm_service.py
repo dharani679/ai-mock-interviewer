@@ -1,8 +1,11 @@
 import asyncio
 import json
+import logging
 from urllib import error, request
 
 from apps.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class LLMService:
@@ -45,6 +48,8 @@ class LLMService:
 
     async def generate_questions(self, interview_context: str, count: int = 5) -> list[dict]:
         prompt = self._build_prompt(interview_context=interview_context, count=count)
+        provider = self._provider_name()
+        logger.info("LLM question generation started provider=%s count=%s", provider, count)
 
         payload = {
             "model": self.model,
@@ -55,6 +60,7 @@ class LLMService:
 
         def _call_ollama() -> list[dict]:
             endpoint = f"{self.base_url}/api/generate"
+            logger.info("Calling Ollama generate endpoint=%s model=%s", endpoint, self.model)
             req = request.Request(
                 endpoint,
                 data=json.dumps(payload).encode("utf-8"),
@@ -65,10 +71,13 @@ class LLMService:
                 raw = resp.read().decode("utf-8")
             parsed = json.loads(raw)
             response_text = parsed.get("response", "{}")
-            return self._extract_questions(response_text=response_text, provider_name="Ollama")
+            questions = self._extract_questions(response_text=response_text, provider_name="Ollama")
+            logger.info("Ollama returned questions count=%s", len(questions))
+            return questions
 
         def _call_llama_cpp() -> list[dict]:
             endpoint = f"{self.llama_cpp_base_url}/completion"
+            logger.info("Calling llama.cpp completion endpoint=%s", endpoint)
             llama_payload = {
                 "prompt": prompt,
                 "n_predict": 800,
@@ -86,13 +95,16 @@ class LLMService:
                 raw = resp.read().decode("utf-8")
             parsed = json.loads(raw)
             response_text = parsed.get("content", "{}")
-            return self._extract_questions(response_text=response_text, provider_name="llama.cpp")
+            questions = self._extract_questions(response_text=response_text, provider_name="llama.cpp")
+            logger.info("llama.cpp returned questions count=%s", len(questions))
+            return questions
 
         def _call_gemini() -> list[dict]:
             if not self.gemini_api_key:
                 raise RuntimeError("GEMINI_API_KEY is required when LLM_BACKEND=gemini.")
 
             endpoint = f"{self.gemini_base_url}/models/{self.gemini_model}:generateContent"
+            logger.info("Calling Gemini generateContent model=%s", self.gemini_model)
             gemini_payload = {
                 "contents": [
                     {
@@ -126,19 +138,30 @@ class LLMService:
                 raise ValueError("Gemini returned no candidates.")
             parts = candidates[0].get("content", {}).get("parts", [])
             response_text = "".join(part.get("text", "") for part in parts)
-            return self._extract_questions(response_text=response_text, provider_name="Gemini")
+            questions = self._extract_questions(response_text=response_text, provider_name="Gemini")
+            logger.info("Gemini returned questions count=%s", len(questions))
+            return questions
 
         try:
             if self.backend == "llama_cpp":
-                return await asyncio.to_thread(_call_llama_cpp)
+                questions = await asyncio.to_thread(_call_llama_cpp)
+                logger.info("LLM question generation finished provider=%s count=%s", provider, len(questions))
+                return questions
             if self.backend == "gemini":
-                return await asyncio.to_thread(_call_gemini)
-            return await asyncio.to_thread(_call_ollama)
+                questions = await asyncio.to_thread(_call_gemini)
+                logger.info("LLM question generation finished provider=%s count=%s", provider, len(questions))
+                return questions
+            questions = await asyncio.to_thread(_call_ollama)
+            logger.info("LLM question generation finished provider=%s count=%s", provider, len(questions))
+            return questions
         except error.URLError as exc:
             provider = self._provider_name()
+            logger.exception("Unable to reach LLM provider=%s", provider)
             raise RuntimeError(f"Unable to reach {provider} service.") from exc
         except json.JSONDecodeError as exc:
             provider = self._provider_name()
+            logger.exception("Invalid JSON returned by LLM provider=%s", provider)
             raise RuntimeError(f"Invalid JSON returned by {provider}.") from exc
         except Exception as exc:
+            logger.exception("LLM question generation failed provider=%s", provider)
             raise RuntimeError(str(exc)) from exc
